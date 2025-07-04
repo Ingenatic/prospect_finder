@@ -32,17 +32,6 @@ GEOGRAPHIES = [
     "Netherlands", "Sweden", "Finland", "Norway", "Denmark", "Estonia",
 ]
 
-ROLE_TYPES: dict[str, list[str]] = {
-    "ExP": [
-        "CIO", "Chief Information Officer", "Information Technology", "IT Director", "IT",
-        "IT Manager", "CTIO", "Digital", "IT Infrastructure Director",
-        "Senior IT Director",
-    ],
-    "Security": [
-        "Security", "CISO", "Cyber",
-    ],
-}
-
 ROLE_PATTERNS = {
     r: re.compile("(" + "|".join(map(re.escape, ts)) + ")", re.I) for r, ts in ROLE_TYPES.items()
 }
@@ -66,9 +55,8 @@ def _apollo_request(params: dict) -> list[dict]:
     if not api_key:
         st.error("Apollo API key missing. Set APOLLO_API_KEY.")
         return []
-    headers = {"x-api-key": api_key, "accept": "application/json"}
     try:
-        resp = requests.post(SEARCH_ENDPOINT, headers=headers, params=params, timeout=30)
+        resp = requests.post(SEARCH_ENDPOINT, headers={"x-api-key": api_key}, params=params, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         return data.get("people", []) if isinstance(data, dict) else []
@@ -76,16 +64,14 @@ def _apollo_request(params: dict) -> list[dict]:
         st.error(f"API request failed: {exc}")
         return []
 
-# ─────────────────────── Prospect search (one call) ─────────────────────────
 
 def search_for(account: str, geo: str, role: str, seniorities: List[str], prospected: bool) -> list[dict]:
-    titles = ROLE_TYPES[role]
     params = {
         "page": 1,
         "per_page": 25,
         "q_organization_name": account,
         "person_locations[]": [geo],
-        "person_titles[]": titles,
+        "person_titles[]": ROLE_TYPES[role],
     }
     if seniorities:
         params["person_seniorities[]"] = seniorities
@@ -93,134 +79,113 @@ def search_for(account: str, geo: str, role: str, seniorities: List[str], prospe
         params["prospected"] = "true"
     return _apollo_request(params)
 
-# ───────────────────── Contact enrichment ───────────────────────────────────
-
 @st.cache_data(show_spinner=False)
-def get_contact(person_id: str) -> Tuple[Optional[str], Optional[str]]:
+def get_contact(pid: str) -> Tuple[Optional[str], Optional[str]]:
     api_key = _get_api_key()
     if not api_key:
         return None, None
-    headers = {"x-api-key": api_key, "accept": "application/json"}
-    payload = {"id": person_id, "reveal_personal_emails": "true", "reveal_phone_number": "true"}
     try:
-        r = requests.post(ENRICH_ENDPOINT, headers=headers, json=payload, timeout=30)
+        r = requests.post(ENRICH_ENDPOINT, headers={"x-api-key": api_key}, json={"id": pid, "reveal_personal_emails": "true", "reveal_phone_number": "true"}, timeout=30)
         r.raise_for_status()
         d = r.json()
     except requests.RequestException:
         return None, None
     email = next((e["value"] for e in d.get("emails", []) if e.get("status") == "verified"), None)
-    phone = next((p.get("phone_number") for p in d.get("direct_dials", [])), None) or \
-        next((p.get("phone_number") for p in d.get("mobile_phone_numbers", [])), None)
+    phone = next((p.get("phone_number") for p in d.get("direct_dials", [])), None) or next((p.get("phone_number") for p in d.get("mobile_phone_numbers", [])), None)
     return email, phone
 
-# ─────────────────────── Session state init ─────────────────────────────────
+# ─────────────────────── Session init ───────────────────────────────────────
 
 def _init_state():
-    st.session_state.setdefault("prospects", {})  # id -> prospect dict
-    st.session_state.setdefault("contacts", {})   # id -> (email, phone)
-    st.session_state.setdefault("saved", {})      # id -> (name, url)
+    st.session_state.setdefault("prospects", {})  # id → dict
+    st.session_state.setdefault("contacts", {})   # id → (email, phone)
+    st.session_state.setdefault("saved", {})      # id → (name, url)
 
 
-# ───────────────────────────── Main UI ───────────────────────────────────────
+def _rerun():
+    if hasattr(st, "experimental_rerun"):
+        st.experimental_rerun()
+
+# ───────────────────────────── Main ──────────────────────────────────────────
 
 def main():
     _init_state()
 
     st.title("🔍 Prospect Finder (Apollo)")
 
-    with st.expander("Accounts input", expanded=True):
-        text_accounts = st.text_area(
-            "Enter one or more account names (comma or newline separated)",
-            height=120,
-        )
-        uploaded_file = st.file_uploader("…or upload a CSV of account names", type=["csv"])
+    # Input
+    with st.expander("Accounts", expanded=True):
+        txt = st.text_area("Account names (comma or newline)")
+        up = st.file_uploader("or CSV upload", type=["csv"])
 
-    with st.form("search_form"):
+    with st.form("controls"):
         geos = st.multiselect("Geographies", GEOGRAPHIES, default=GEOGRAPHIES)
-        role = st.selectbox("Role Type", list(ROLE_TYPES.keys()))
-        mgmt_only = st.checkbox("Management and above", value=True)
-        inc_prospected = st.checkbox("Include previously prospected")
-        submitted = st.form_submit_button("Search")
+        role = st.selectbox("Role", list(ROLE_TYPES.keys()))
+        mgmt = st.checkbox("Management and above", True)
+        inc_p = st.checkbox("Include previously prospected")
+        go = st.form_submit_button("Search")
 
-    # Parse account list
-    accounts: Set[str] = set()
-    for token in re.split(r"[\n,]", text_accounts):
-        name = token.strip()
-        if name:
-            accounts.add(name)
-    if uploaded_file is not None:
-        try:
-            decoded = uploaded_file.read().decode("utf-8")
-            reader = csv.reader(io.StringIO(decoded))
-            for row in reader:
-                if row:
-                    accounts.add(row[0].strip())
-        except Exception as e:
-            st.error(f"Could not read CSV: {e}")
+    # Parse accounts
+    accts: Set[str] = {a.strip() for a in re.split(r"[\n,]", txt) if a.strip()}
+    if up:
+        reader = csv.reader(io.StringIO(up.read().decode("utf-8")))
+        for row in reader:
+            if row and row[0].strip():
+                accts.add(row[0].strip())
 
-    # Search
-    if submitted:
-        if not accounts:
-            st.warning("No account names provided.")
-        elif not geos:
-            st.warning("Select at least one geography.")
-        else:
-            st.session_state.prospects.clear()
-            seniorities = SENIORITY_LEVELS if mgmt_only else []
-            with st.spinner("Searching Apollo …"):
-                for acc in accounts:
-                    for geo in geos:
-                        # unprospected first
-                        for person in search_for(acc, geo, role, seniorities, prospected=False):
-                            st.session_state.prospects[person["id"]] = person
-                        if inc_prospected:
-                            for person in search_for(acc, geo, role, seniorities, prospected=True):
-                                st.session_state.prospects[person["id"]] = person
-            st.success(f"Found {len(st.session_state.prospects)} unique prospects.")
+    if go and accts and geos:
+        st.session_state.prospects.clear()
+        seniorities = SENIORITY_LEVELS if mgmt else []
+        with st.spinner("Searching …"):
+            for acc in accts:
+                for geo in geos:
+                    for p in search_for(acc, geo, role, seniorities, False):
+                        st.session_state.prospects[p["id"]] = p
+                    if inc_p:
+                        for p in search_for(acc, geo, role, seniorities, True):
+                            st.session_state.prospects[p["id"]] = p
+        st.success(f"Found {len(st.session_state.prospects)} prospects.")
+        _rerun()
 
-        # Display results
+    # Results
     for p in st.session_state.prospects.values():
         name = p.get("name", "[No name]")
         title = p.get("title", "")
         location = p.get("location", "—")
-        company = p.get("company", "")
+        company = p.get("company", "—")
         url = p.get("profile_url", "")
-
-        st.markdown("".join([
+        st.markdown("\n".join([
             f"**{name}** – {title}",
             f"📌 {location} | 🏢 {company}",
             f"[LinkedIn profile]({url})" if url else "[No LinkedIn URL]",
         ]))
-
-        cols = st.columns(3)
-        with cols[0]:
+        c1, c2, _ = st.columns(3)
+        with c1:
             if p["id"] in st.session_state.contacts:
                 email, phone = st.session_state.contacts[p["id"]]
                 st.markdown(f"📧 {email or '—'} | 📞 {phone or '—'}")
             else:
                 if st.button("Reveal contact", key=f"reveal_{p['id']}"):
                     with st.spinner("Fetching …"):
-                        email, phone = get_contact(person_id=p["id"])
+                        email, phone = get_contact(p["id"])
                     st.session_state.contacts[p["id"]] = (email, phone)
-                    _maybe_rerun()
-        with cols[1]:
+                    _rerun()
+        with c2:
             if p["id"] in st.session_state.saved:
                 st.markdown("✅ Saved")
             else:
                 if st.button("Save", key=f"save_{p['id']}"):
-                    st.session_state.saved[p["id"]] = (name, url or "")
-                    _maybe_rerun()
-        with cols[2]:
-            st.write("")
+                    st.session_state.saved[p["id"]] = (name, url)
+                    _rerun()
         st.markdown("---")
 
-    # Saved prospects sidebar
-    with st.sidebar.expander("⭐️ Saved prospects", expanded=True):
+    # Sidebar saved list
+    with st.sidebar.expander("⭐️ Saved prospects", True):
         if st.session_state.saved:
-            for name, url in st.session_state.saved.values():
-                st.markdown(f"• [{name}]({url})")
+            for n, u in st.session_state.saved.values():
+                st.markdown(f"• [{n}]({u})" if u else f"• {n}")
         else:
-            st.write("No prospects saved yet.")
+            st.write("None yet.")
 
 
 if __name__ == "__main__":
