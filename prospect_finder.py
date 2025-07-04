@@ -178,31 +178,38 @@ def main():
                                 st.session_state.prospects[person["id"]] = person
             st.success(f"Found {len(st.session_state.prospects)} unique prospects.")
 
-    # Display results
+        # Display results
     for p in st.session_state.prospects.values():
-        st.markdown("\n".join([
-            f"**{p['name']}** – {p['title']}",
-            f"📌 {p['location']} | 🏢 {p['company']}",
-            f"[LinkedIn profile]({p['profile_url']})",
+        name = p.get("name", "[No name]")
+        title = p.get("title", "")
+        location = p.get("location", "—")
+        company = p.get("company", "")
+        url = p.get("profile_url", "")
+
+        st.markdown("".join([
+            f"**{name}** – {title}",
+            f"📌 {location} | 🏢 {company}",
+            f"[LinkedIn profile]({url})" if url else "[No LinkedIn URL]",
         ]))
+
         cols = st.columns(3)
         with cols[0]:
             if p["id"] in st.session_state.contacts:
                 email, phone = st.session_state.contacts[p["id"]]
-                st.markdown(f"📧 {email or '—'} \| 📞 {phone or '—'}")
+                st.markdown(f"📧 {email or '—'} | 📞 {phone or '—'}")
             else:
                 if st.button("Reveal contact", key=f"reveal_{p['id']}"):
                     with st.spinner("Fetching …"):
                         email, phone = get_contact(person_id=p["id"])
                     st.session_state.contacts[p["id"]] = (email, phone)
-                    st.experimental_rerun()
+                    _maybe_rerun()
         with cols[1]:
             if p["id"] in st.session_state.saved:
                 st.markdown("✅ Saved")
             else:
                 if st.button("Save", key=f"save_{p['id']}"):
-                    st.session_state.saved[p["id"]] = (p["name"], p["profile_url"])
-                    st.experimental_rerun()
+                    st.session_state.saved[p["id"]] = (name, url or "")
+                    _maybe_rerun()
         with cols[2]:
             st.write("")
         st.markdown("---")
