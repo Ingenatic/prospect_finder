@@ -43,40 +43,44 @@ ROLE_TYPES: dict[str, list[str]] = {
     ],
 }
 
-ROLE_PATTERNS = {
-    r: re.compile("(" + "|".join(map(re.escape, ts)) + ")", re.I) for r, ts in ROLE_TYPES.items()
-}
+ROLE_PATTERNS = {k: re.compile("(" + "|".join(map(re.escape, v)) + ")", re.I) for k, v in ROLE_TYPES.items()}
 
-SENIORITY_LEVELS = [
-    "owner", "founder", "c_suite", "partner", "vp", "head", "director", "manager",
-]
+SENIORITY_LEVELS = ["owner", "founder", "c_suite", "partner", "vp", "head", "director", "manager"]
 
 API_BASE = "https://api.apollo.io/api/v1"
 SEARCH_ENDPOINT = f"{API_BASE}/mixed_people/search"
 ENRICH_ENDPOINT = f"{API_BASE}/people/match"
 
-# ───────────────────────── Helpers ───────────────────────────────────────────
+# ───────────────────────── Apollo helpers ────────────────────────────────────
 
-def _get_api_key() -> Optional[str]:
+def _key() -> Optional[str]:
     return os.getenv("APOLLO_API_KEY") or st.secrets.get("APOLLO_API_KEY", None)
 
 
-def _apollo_request(params: dict) -> list[dict]:
-    api_key = _get_api_key()
-    if not api_key:
-        st.error("Apollo API key missing. Set APOLLO_API_KEY.")
-        return []
+def _people_search(params: dict) -> list[dict]:
+    k = _key()
+    if not k:
+        st.error("Apollo API key missing."); return []
     try:
-        resp = requests.post(SEARCH_ENDPOINT, headers={"x-api-key": api_key}, params=params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
+        r = requests.post(SEARCH_ENDPOINT, headers={"x-api-key": k}, params=params, timeout=30)
+        r.raise_for_status()
+        data = r.json()
         return data.get("people", []) if isinstance(data, dict) else []
-    except requests.RequestException as exc:
-        st.error(f"API request failed: {exc}")
-        return []
+    except requests.RequestException as e:
+        st.error(e); return []
 
 
-def search_for(account: str, geo: str, role: str, seniorities: List[str], prospected: bool) -> list[dict]:
+def _people_enrich(pid: str) -> dict | None:
+    k = _key();
+    if not k: return None
+    try:
+        r = requests.post(ENRICH_ENDPOINT, headers={"x-api-key": k}, json={"id": pid, "reveal_personal_emails": "true", "reveal_phone_number": "true"}, timeout=30)
+        r.raise_for_status(); return r.json()
+    except requests.RequestException: return None
+
+# ───────────────────────── Search wrappers ───────────────────────────────────
+
+def search_one(account: str, geo: str, role: str, seniorities: list[str], prospected: bool) -> list[dict]:
     params = {
         "page": 1,
         "per_page": 25,
@@ -84,92 +88,88 @@ def search_for(account: str, geo: str, role: str, seniorities: List[str], prospe
         "person_locations[]": [geo],
         "person_titles[]": ROLE_TYPES[role],
     }
-    if seniorities:
-        params["person_seniorities[]"] = seniorities
-    if prospected:
-        params["prospected"] = "true"
-    return _apollo_request(params)
+    if seniorities: params["person_seniorities[]"] = seniorities
+    if prospected: params["prospected"] = "true"
+    return _people_search(params)
+
+# ───────────────────────── Cached contact fetch ─────────────────────────────
 
 @st.cache_data(show_spinner=False)
 def get_contact(pid: str) -> Tuple[Optional[str], Optional[str]]:
-    api_key = _get_api_key()
-    if not api_key:
-        return None, None
-    try:
-        r = requests.post(ENRICH_ENDPOINT, headers={"x-api-key": api_key}, json={"id": pid, "reveal_personal_emails": "true", "reveal_phone_number": "true"}, timeout=30)
-        r.raise_for_status()
-        d = r.json()
-    except requests.RequestException:
-        return None, None
+    d = _people_enrich(pid)
+    if not d: return None, None
     email = next((e["value"] for e in d.get("emails", []) if e.get("status") == "verified"), None)
     phone = next((p.get("phone_number") for p in d.get("direct_dials", [])), None) or next((p.get("phone_number") for p in d.get("mobile_phone_numbers", [])), None)
     return email, phone
 
-# ─────────────────────── Session init ───────────────────────────────────────
+# ───────────────────────── Session state ------------------------------------
 
 def _init_state():
-    st.session_state.setdefault("prospects", {})  # id → dict
-    st.session_state.setdefault("contacts", {})   # id → (email, phone)
-    st.session_state.setdefault("saved", {})      # id → (name, url)
+    st.session_state.setdefault("prospects", {})   # id → prospect dict
+    st.session_state.setdefault("contacts", {})    # id → (email, phone)
+    st.session_state.setdefault("saved", {})       # id → saved dict
 
 
 def _rerun():
-    if hasattr(st, "experimental_rerun"):
-        st.experimental_rerun()
+    if hasattr(st, "experimental_rerun"): st.experimental_rerun()
 
-# ───────────────────────────── Main ──────────────────────────────────────────
+# ───────────────────────── UI ------------------------------------------------
 
 def main():
     _init_state()
 
     st.title("🔍 Prospect Finder (Apollo)")
 
-    # Input
     with st.expander("Accounts", expanded=True):
         txt = st.text_area("Account names (comma or newline)")
-        up = st.file_uploader("or CSV upload", type=["csv"])
+        up = st.file_uploader("or CSV upload", type="csv")
 
     with st.form("controls"):
         geos = st.multiselect("Geographies", GEOGRAPHIES, default=GEOGRAPHIES)
         role = st.selectbox("Role", list(ROLE_TYPES.keys()))
         mgmt = st.checkbox("Management and above", True)
-        inc_p = st.checkbox("Include previously prospected")
+        incp = st.checkbox("Include previously prospected")
         go = st.form_submit_button("Search")
 
-    # Parse accounts
+    # Parse account list
     accts: Set[str] = {a.strip() for a in re.split(r"[\n,]", txt) if a.strip()}
-    if up:
+    if up is not None:
         reader = csv.reader(io.StringIO(up.read().decode("utf-8")))
         for row in reader:
-            if row and row[0].strip():
-                accts.add(row[0].strip())
+            if row and row[0].strip(): accts.add(row[0].strip())
 
-    if go and accts and geos:
-        st.session_state.prospects.clear()
-        seniorities = SENIORITY_LEVELS if mgmt else []
-        with st.spinner("Searching …"):
-            for acc in accts:
-                for geo in geos:
-                    for p in search_for(acc, geo, role, seniorities, False):
-                        st.session_state.prospects[p["id"]] = p
-                    if inc_p:
-                        for p in search_for(acc, geo, role, seniorities, True):
+    if go:
+        if not accts:
+            st.error("Provide at least one account name.")
+        elif not geos:
+            st.error("Select at least one geography.")
+        else:
+            st.session_state.prospects.clear(); st.session_state.contacts.clear()
+            seniorities = SENIORITY_LEVELS if mgmt else []
+            with st.spinner("Searching Apollo …"):
+                for acc in accts:
+                    for g in geos:
+                        for p in search_one(acc, g, role, seniorities, False):
                             st.session_state.prospects[p["id"]] = p
-        st.success(f"Found {len(st.session_state.prospects)} prospects.")
-        _rerun()
+                        if incp:
+                            for p in search_one(acc, g, role, seniorities, True):
+                                st.session_state.prospects[p["id"]] = p
+            st.success(f"Found {len(st.session_state.prospects)} unique prospects.")
+            _rerun()
 
-    # Results
+    # ── Results
     for p in st.session_state.prospects.values():
-        name = p.get("name", "[No name]")
-        title = p.get("title", "")
-        location = p.get("location", "—")
-        company = p.get("company", "—")
-        url = p.get("profile_url", "")
+        name   = p.get("name", "[No name]")
+        title  = p.get("title", "")
+        loc    = p.get("location", "—")
+        comp   = p.get("company") or p.get("organization", {}).get("name", "—")
+        url    = p.get("profile_url", "")
         st.markdown("\n".join([
             f"**{name}** – {title}",
-            f"📌 {location} | 🏢 {company}",
+            f"📌 {loc} | 🏢 {comp}",
             f"[LinkedIn profile]({url})" if url else "[No LinkedIn URL]",
         ]))
+
         c1, c2, _ = st.columns(3)
         with c1:
             if p["id"] in st.session_state.contacts:
@@ -186,15 +186,22 @@ def main():
                 st.markdown("✅ Saved")
             else:
                 if st.button("Save", key=f"save_{p['id']}"):
-                    st.session_state.saved[p["id"]] = (name, url)
+                    st.session_state.saved[p["id"]] = {
+                        "name": name,
+                        "title": title,
+                        "company": comp,
+                        "url": url,
+                    }
                     _rerun()
         st.markdown("---")
 
-    # Sidebar saved list
+    # ── Saved sidebar
     with st.sidebar.expander("⭐️ Saved prospects", True):
         if st.session_state.saved:
-            for n, u in st.session_state.saved.values():
-                st.markdown(f"• [{n}]({u})" if u else f"• {n}")
+            for s in st.session_state.saved.values():
+                bullet = f"• **{s['name']}** – {s['title']} | 🏢 {s['company']}"
+                bullet += f" ([LinkedIn]({s['url']}))" if s['url'] else ""
+                st.markdown(bullet)
         else:
             st.write("None yet.")
 
