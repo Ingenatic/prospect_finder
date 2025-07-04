@@ -163,7 +163,7 @@ def main():
         title  = p.get("title", "")
         loc    = p.get("location", "—")
         comp   = p.get("company") or p.get("organization", {}).get("name", "—")
-        url    = p.get("linkedin_url", "")
+        url    = p.get("linkedin_URL", "")
         st.markdown("\n".join([
             f"**{name}** – {title}",
             f"📌 {loc} | 🏢 {comp}",
@@ -198,13 +198,28 @@ def main():
     # ── Saved sidebar
     with st.sidebar.expander("⭐️ Saved prospects", True):
         if st.session_state.saved:
+            # List in sidebar
             for s in st.session_state.saved.values():
                 bullet = f"• **{s['name']}** – {s['title']} | 🏢 {s['company']}"
                 bullet += f" ([LinkedIn]({s['url']}))" if s['url'] else ""
                 st.markdown(bullet)
+
+            # CSV export button
+            csv_buf = io.StringIO()
+            writer = csv.writer(csv_buf)
+            writer.writerow(["Name", "Title", "Company", "LinkedIn URL"])
+            for s in st.session_state.saved.values():
+                writer.writerow([s['name'], s['title'], s['company'], s['url']])
+            st.download_button(
+                label="⬇️ Download CSV",
+                data=csv_buf.getvalue(),
+                file_name="saved_prospects.csv",
+                mime="text/csv",
+            )
         else:
             st.write("None yet.")
 
 
 if __name__ == "__main__":
+    main() == "__main__":
     main()
