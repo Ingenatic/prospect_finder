@@ -163,7 +163,7 @@ def main():
         title  = p.get("title", "")
         loc    = p.get("location", "—")
         comp   = p.get("company") or p.get("organization", {}).get("name", "—")
-        url    = p.get("profile_url", "")
+        url    = p.get("linkedin_url", "")
         st.markdown("\n".join([
             f"**{name}** – {title}",
             f"📌 {loc} | 🏢 {comp}",
