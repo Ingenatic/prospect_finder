@@ -32,6 +32,17 @@ GEOGRAPHIES = [
     "Netherlands", "Sweden", "Finland", "Norway", "Denmark", "Estonia",
 ]
 
+ROLE_TYPES: dict[str, list[str]] = {
+    "ExP": [
+        "CIO", "Chief Information Officer", "Information Technology", "IT Director", "IT",
+        "IT Manager", "CTIO", "Digital", "IT Infrastructure Director",
+        "Senior IT Director",
+    ],
+    "Security": [
+        "Security", "CISO", "Cyber",
+    ],
+}
+
 ROLE_PATTERNS = {
     r: re.compile("(" + "|".join(map(re.escape, ts)) + ")", re.I) for r, ts in ROLE_TYPES.items()
 }
