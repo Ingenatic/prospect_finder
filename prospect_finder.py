@@ -27,15 +27,12 @@ GEOGRAPHIES: list[str] = [
 
 ROLE_TYPES: dict[str, list[str]] = {
     "ExP": [
-        "CIO", "Chief Information Officer", "VP IT", "IT Director", "Head of IT",
-        "IT Manager", "CTIO", "Director of IT Operations", "IT Infrastructure Director",
+        "CIO", "Chief Information Officer", "Information Technology", "IT Director", "IT",
+        "IT Manager", "CTIO", "Digital", "IT Infrastructure Director",
         "Senior IT Director",
     ],
     "Security": [
-        "CISO", "Chief Information Security Officer", "VP Information Security",
-        "Security Director", "Head of IT Security", "Security Manager",
-        "Security Operations Manager", "Cyber Security Manager",
-        "Information Security Lead", "Deputy CISO",
+        "Security", "CISO", "Cyber",
     ],
 }
 
