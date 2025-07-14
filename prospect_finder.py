@@ -36,7 +36,7 @@ ROLE_TYPES: dict[str, list[str]] = {
     "ExP": [
         "CIO", "Chief Information Officer", "Information Technology", "IT Director", "IT",
         "Enterprise", "CTIO", "Digital", "Transformation",
-        "Senior IT Director",
+        "ICT",
     ],
     "Security": [
         "Security", "CISO", "Cyber", "Risk",
