@@ -42,11 +42,11 @@ ROLE_TYPES: dict[str, list[str]] = {
         "Security", "CISO", "Cyber", "Risk",
     ],
     "EA": [
-        "Head of Architect", "Chief Architect", "Enterprise Architect", "Head of Engineering",
+        "Architect", "Enterprise Architect", "Architecture",
     ],
     "Procurement": [
-        "Head of IT Procurement", "Head of IT Sourcing", "Head of IT Category Management", 
-        "Technology Procurement Lead", "IT Portfolio Manager", "Head of IT Strategy",
+        "IT Procurement", "IT Sourcing", "IT Category Management", 
+        "Technology Procurement", "IT Portfolio", "IT Strategy",
     ],
 }
 
