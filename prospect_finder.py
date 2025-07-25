@@ -2,7 +2,7 @@
 # -----------------------------------------------------------------------------
 # Written in UK English.
 #
-# Version 3.0 – multiple accounts + CSV upload + saved‑prospects panel
+# Version 3.0 – multiple accounts + CSV upload + saved‑prospects panel
 # ---------------------------------------------------------------
 # * **Accounts input:** free‑text box (comma/line‑separated) *plus* optional CSV
 #   upload (first column = account names). You can search many companies across
@@ -12,7 +12,7 @@
 # * Existing features retained: seniority filter, include‑prospected toggle,
 #   contact reveal, geography multiselect.
 # * Uses only built‑in `csv` module – no extra dependencies beyond
-#   `streamlit` and `requests`.
+#   `streamlit` and `requests`.
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 
@@ -40,6 +40,13 @@ ROLE_TYPES: dict[str, list[str]] = {
     ],
     "Security": [
         "Security", "CISO", "Cyber", "Risk",
+    ],
+    "EA": [
+        "Head of Architect", "Chief Architect", "Enterprise Architect", "Head of Engineering",
+    ],
+    "Procurement": [
+        "Head of IT Procurement", "Head of IT Sourcing", "Head of IT Category Management", 
+        "Technology Procurement Lead", "IT Portfolio Manager", "Head of IT Strategy",
     ],
 }
 
@@ -211,7 +218,7 @@ def main():
             for s in st.session_state.saved.values():
                 writer.writerow([s['name'], s['title'], s['company'], s['url']])
             st.download_button(
-                label="⬇️ Download CSV",
+                label="⬇️ Download CSV",
                 data=csv_buf.getvalue(),
                 file_name="saved_prospects.csv",
                 mime="text/csv",
